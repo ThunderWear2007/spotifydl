@@ -11,6 +11,7 @@ import pathlib
 import yt_dlp
 import os
 import requests
+import re
 
 #https://open.spotify.com/playlist/37i9dQZF1DXbS5WTN5nKF7
 
@@ -167,42 +168,26 @@ def scrap_cover(driver, element):
 #Returns the string broken in this format : [numberInPlaylist, title, [artists], album, time since published, duration]
 #Retire les ' pour ne pas bloquer avec le SQL
 def break_it(element):
-    """
-    lines = [line.strip() for line in data.strip().split('\n') if line.strip()]
-    
-    if lines[2]=="E":
-        del(lines[2])
-    
-    index = lines[0]
-    title = lines[1].replace("'", " ")
-    duration = lines[-1]
-    date = lines[-2]
-    album = lines[3].replace("'", " ")
-    artists_str = lines[2]
-    
-    if artists_str == "E":
-        artists = []
-    else:
-        artists = [a.strip().replace("'", " ") for a in artists_str.split(",")]
-    artists_final = []
-    for el in artists:
-        if el != '':
-            artists_final.append(el)"""
-    artists = [el.text for el in element.find_elements(By.CSS_SELECTOR, ".artist")]
     artists_element = element.find_elements(By.CLASS_NAME, "HyipfPVwSpodPBHR")
+    
     artists_final = [el.text for el in artists_element[0].find_elements(By.CSS_SELECTOR, '[tabindex="-1"]')]
-    if "E" in artists:
-        del artists[artists.index("E")]
+    
     data = element.text
     lines = [line.strip() for line in data.strip().split('\n') if line.strip()]
-    
     index = lines[0]
+    
+    if index == '66':
+        None
+    for i in range(len(artists_final)):
+        artists_final[i] = re.sub("'", " ", artists_final[i])
+
     title = lines[1].replace("'", " ")
     duration = lines[-1]
     date = lines[-2]
     album = lines[3].replace("'", " ")
 
     return [index, title, artists_final, album, date, duration]
+
 #Makes a clean list of lists with break_it
 #Add the link to the cover 
 def extract_info(driver, musics, cover):
@@ -394,6 +379,10 @@ def id_if_not_present(conn, table, column, value, isQuery, query):
         
     return get_it
 
+def break_cover_link(cover_link):
+    return cover_link[24:]
+
+
 
 #CETTE FONCTION A POUR OBJECTIF DE RÉSUMER L'AJOUT DE DONNÉES DANS LA BASE DE DONNÉE.
 #NE SURTOUT PAS CHANGER SI ÇA FONCTIONNE, FONCTION TRÈS SENSIBLE
@@ -402,23 +391,22 @@ def id_if_not_present(conn, table, column, value, isQuery, query):
 #regarde pour les artistes, vérifie si ils existent, pareil pour album...
 #music est un tableau de la meme forme que renvoie extract_info()
 def add_music(conn, music, link):
-    music_id = id_finder(conn, "music", "link", link, False, "")
+    #music_id = id_finder(conn, "music", "link", link, False, "")
+    music_id = id_finder(conn, "music", "music_link", link, False, "")
     if music_id == "" : 
         #On prend tous les artists
         artists = music[2]
         artists_id = []
         #On récupère leur id
         for i in range(len(artists)):
-            print("Artists = ",artists[i])
             toto = id_if_not_present(conn, "artist", "name", artists[i], False, "")
-            print("Artist_id : ", toto)
             artists_id.append(toto)
         #On prend l'album
         album_id = 0
         album_id = id_if_not_present(conn, "album", "name, artist", music[3] + "', '"  + artists_id[0], True, "SELECT ID FROM album WHERE name = '"+music[3]+"' AND artist = '"+ str(artists_id[0]) + "'")
         #On crée la musique nouvelle
-        #print("album id vaut : ", album_id[0])
-        insert(conn, "music", "title, link, album", music[1]+ "', '" + link + "', '" + str(album_id) , 0, "")
+        insert(conn, "music", "title, music_link, album, cover_link", music[1]+ "', '" + link + "', '" + str(album_id) + "', '" + break_cover_link(music[6]) , 0, "")
+        #insert(conn, "music", "title, link, album", music[1]+ "', '" + link + "', '" + str(album_id), 0, "")
         #On réccupère son identifiant
         music_id = id_finder(conn, "music", "title", music[1], False, "")
         for i in artists_id:
@@ -453,7 +441,6 @@ def dl_only_musics(final, youtubeLinks, extensions):
             musique, musique_id = add_music(conn, final[link[0]-1], extensions[k][1])
             ids.append(musique_id)
             if musique != None:
-                musique
                 dl_cover(musique[6], musique[0])
                 while not os.path.exists(temp_path):
                     time.sleep(0.1)
@@ -535,8 +522,8 @@ def check_database(conn):
                             None
                             #print("Album "+ albums_name[i][0] + " exists")
                         else:
-                            print("/! Music "+ musics_name[i][0] + " does not exists /! ")
-                            unexisting_musics.append([musics_id[i][0], music_path])
+                            print("/! Music "+ musics_name[j][0] + " does not exists /! ")
+                            unexisting_musics.append([musics_id[j][0], music_path])
                     else:
                         print("/! Album "+ albums_name[i][0] + " does not exists /! ")
                         unexisting_albums.append([albums_id[i][0], album_path])
@@ -545,6 +532,42 @@ def check_database(conn):
                     unexisting_artists.append([artist, artist_path])
             
     return unexisting_musics, unexisting_albums
+
+def update(conn, table, column, value, condition):
+    query = "UPDATE "+table+" SET " + column +" = '"+ value + "' WHERE "+ condition + "; "
+    with conn:
+        conn.execute(query)
+
+def modify_music(conn, name, new_link):
+    temp_path = str(pathlib.Path(__file__).parent.resolve()) + "/temp/"
+    music_id = id_finder(conn, "music", "title", name, False, "")
+    cover_link = select_row_in_table(conn, "music", "id", music_id, "cover_link")
+    update(conn, "music", "music_link", new_link, "id =" + music_id[0])
+    dl_cover(cover_link[0][0], music_id)
+    while not os.path.exists(temp_path):
+        time.sleep(0.1)
+        
+    album = select_row_in_table(conn, "music", "id", music_id, "album")
+    artist = select_row_in_table(conn, "lienartistmusic", "music_id", music_id, "artist_id")
+    title = select_row_in_table(conn, "music", "id", music_id, "title")
+    musique = [music_id,title, [artist], album]
+    yt_dl(musique)
+
+def re_dl_music(conn, ids):
+    music_link = select_row_in_table(conn, "music", "id", ids[0], "music_link")
+    music_link = "https://music.youtube.com/watch?v=" + music_link[0][0]
+    cover_link = select_row_in_table(conn, "music", "id", ids[0], "cover_link")
+    cover_link = "https://i.scdn.co/image/" + cover_link[0][0]
+    title = select_row_in_table(conn, "music", "id", ids[0], "title")
+    title = title[0][0]
+    artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", ids[0], "artist_id")
+    artist = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name")
+    artist = artist[0][0]
+    album_id = select_row_in_table(conn, "music", "id", ids[0], "album")
+    album = select_row_in_table(conn, "album", "id", album_id[0][0], "name")
+    album = album[0][0]
+    return [str(ids[0]), title, [artist], album, "", "", cover_link, music_link]
+
 
 #===========================================================
 #===========================================================
@@ -558,7 +581,6 @@ def check_database(conn):
 
 #The function to download the music from youtube music
 def yt_dl(musics):
-    #Boucle car plusieurs liens dans plusieurs dossiers /!\ musics[i] est une liste
     #Crée le dossier s'il n'existe pas 
     os.makedirs("artists/"+ musics[2][0] +"/" + musics[3], exist_ok=True)
     #Options d'installation
@@ -578,7 +600,9 @@ def yt_dl(musics):
         "max_sleep_interval": 5,
         "retries": 10,
         "ignoreerrors": True,
-        "cookiesfrombrowser": ("firefox",), 
+        #"cookiesfrombrowser": ("firefox",), 
+        #'username': 'dlyoutube67@gmail.com',
+        #'password': 'zX.A.tn~wYr8Y',
 
         'postprocessors': [
             {
@@ -615,10 +639,6 @@ def yt_dl(musics):
     #En utilisant les options ydl_opts, installer les musiques.
     with yt_dlp.YoutubeDL(ydl_opts) as ydl :
         try: 
-            """info = ydl.extract_info(musics[7], download=True)
-            info['thumbnails'] = [{'filepath': "temp/" + musics[0], 'id': 'local', 'url' : ''}]
-            ydl.post_process(info['requested_downloads'][0]['filepath'], info)
-            #ydl.download(musics[7])"""
             thumbnail_path = os.path.abspath("temp/" + musics[0])
     
             info = ydl.extract_info(musics[7], download=True)
@@ -638,6 +658,8 @@ def yt_dl(musics):
                     files_to_move = {thumbnail_path: thumbnail_path}
                 except Exception as e:
                     print(e)
+
+
 
 #===========================================================
 #===========================================================
@@ -659,7 +681,7 @@ def yt_dl(musics):
 #====================================
 
 conn = create_connection()
-check_database(conn)
+a, b = check_database(conn)
 disconnect(conn)
 
 ans = ""
@@ -713,3 +735,47 @@ if ans == "3":
                 name = input("Quel nom souhaitez vous ?")
     add_to_playlist(name, ids, "Maxence Prout")
     disconnect(conn)
+
+if ans == "4":
+    conn = create_connection()
+    ids, b = check_database(conn)
+    print("1.Réinstaller les musiques \n2.Ne rien faire")
+    ans = input("Que voulez-vous faire ?")
+    if ans == "1":
+        for i in range(len(ids)):
+            musique = re_dl_music(conn, ids[i])
+            dl_cover(musique[6], musique[0])
+            yt_dl(musique)
+
+    disconnect(conn)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    

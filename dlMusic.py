@@ -461,18 +461,16 @@ def columns(conn, table, show):
         toto = toto + column[0] + ", "
     return toto
 
-#Cherche les lignes où critere est commun à tous. critere est dans column lui meme dans table
-def select_row_in_table(conn, table, column, critere, row):
-    
+#Cherche les lignes où critere est commun à tous. critere est dans column lui meme dans table si specified
+def select_row_in_table(conn, table, searching_in, critere, data, specified):
     critere = "'" + str(critere) + "'"
-    select = "SELECT "+row+" FROM " + table + " WHERE " + column + " = " + critere
+    if specified:
+        select = "SELECT "+data+" FROM " + table + " WHERE " + searching_in + " = " + critere
+    else:
+        select = "SELECT "+data+" FROM '" + table + "'"
     cur = conn.cursor()
     cur.execute(select)
-    #sortie = ""
     rows = cur.fetchall()
-    #for row in rows:
-    #    sortie = row
-    
     return rows
 
 #Return all of the id in a table
@@ -502,12 +500,12 @@ def check_database(conn):
     unexisting_albums = []
     unexisting_artists = []
     for artist in artists_id:
-        albums_id = select_row_in_table(conn, "album", "artist", artist, "id")
-        albums_name = select_row_in_table(conn, "album", "artist", artist, "name")
-        artist_name = select_row_in_table(conn, "artist", "id", artist, "name")
+        albums_id = select_row_in_table(conn, "album", "artist", artist, "id", True)
+        albums_name = select_row_in_table(conn, "album", "artist", artist, "name", True)
+        artist_name = select_row_in_table(conn, "artist", "id", artist, "name", True)
         for i in range(len(albums_id)):
-            musics_id = select_row_in_table(conn, "music", "album", albums_id[i][0], "id")
-            musics_name = select_row_in_table(conn, "music", "album", albums_id[i][0], "title")
+            musics_id = select_row_in_table(conn, "music", "album", albums_id[i][0], "id", True)
+            musics_name = select_row_in_table(conn, "music", "album", albums_id[i][0], "title", True)
             for j in range(len(musics_name)):
                 artist_path = base_path + artist_name[0][0]
                 album_path = artist_path + "/"+ albums_name[i][0]
@@ -541,30 +539,30 @@ def update(conn, table, column, value, condition):
 def modify_music(conn, name, new_link):
     temp_path = str(pathlib.Path(__file__).parent.resolve()) + "/temp/"
     music_id = id_finder(conn, "music", "title", name, False, "")
-    cover_link = select_row_in_table(conn, "music", "id", music_id, "cover_link")
+    cover_link = select_row_in_table(conn, "music", "id", music_id, "cover_link", True)
     update(conn, "music", "music_link", new_link, "id =" + music_id[0])
     dl_cover(cover_link[0][0], music_id)
     while not os.path.exists(temp_path):
         time.sleep(0.1)
         
-    album = select_row_in_table(conn, "music", "id", music_id, "album")
-    artist = select_row_in_table(conn, "lienartistmusic", "music_id", music_id, "artist_id")
-    title = select_row_in_table(conn, "music", "id", music_id, "title")
+    album = select_row_in_table(conn, "music", "id", music_id, "album", True)
+    artist = select_row_in_table(conn, "lienartistmusic", "music_id", music_id, "artist_id", True)
+    title = select_row_in_table(conn, "music", "id", music_id, "title", True)
     musique = [music_id,title, [artist], album]
     yt_dl(musique)
 
 def re_dl_music(conn, ids):
-    music_link = select_row_in_table(conn, "music", "id", ids[0], "music_link")
-    music_link = "https://music.youtube.com/watch?v=" + music_link[0][0]
-    cover_link = select_row_in_table(conn, "music", "id", ids[0], "cover_link")
+    music_link = select_row_in_table(conn, "music", "id", ids[0], "music_link", True)
+    music_link = "https://youtube.com/watch?v=" + music_link[0][0]
+    cover_link = select_row_in_table(conn, "music", "id", ids[0], "cover_link", True)
     cover_link = "https://i.scdn.co/image/" + cover_link[0][0]
     title = select_row_in_table(conn, "music", "id", ids[0], "title")
     title = title[0][0]
-    artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", ids[0], "artist_id")
-    artist = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name")
+    artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", ids[0], "artist_id", True)
+    artist = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name", True)
     artist = artist[0][0]
-    album_id = select_row_in_table(conn, "music", "id", ids[0], "album")
-    album = select_row_in_table(conn, "album", "id", album_id[0][0], "name")
+    album_id = select_row_in_table(conn, "music", "id", ids[0], "album", True)
+    album = select_row_in_table(conn, "album", "id", album_id[0][0], "name", True)
     album = album[0][0]
     return [str(ids[0]), title, [artist], album, "", "", cover_link, music_link]
 
@@ -600,9 +598,10 @@ def yt_dl(musics):
         "max_sleep_interval": 5,
         "retries": 10,
         "ignoreerrors": True,
-        #"cookiesfrombrowser": ("firefox",), 
+        #'cookiefile': '/path/to/cookies.txt',
         #'username': 'dlyoutube67@gmail.com',
         #'password': 'zX.A.tn~wYr8Y',
+        #'verbose': True,
 
         'postprocessors': [
             {
@@ -651,6 +650,9 @@ def yt_dl(musics):
         except :
             for i in range(5):
                 try:
+                    #cookies_path = str(pathlib.Path(__file__).parent.resolve()) + "/cookies/youtube_cookies.txt"
+                    #print("\n\n\n",os.path.exists(cookies_path), "\n\n\n") 
+                    ydl_opts['cookiesfrombrowser'] = "('chrome', None, None, 'dlYoutube')"  # nom de ton profil dédié
                     thumbnail_path = os.path.abspath("temp/" + musics[0])
                     info = ydl.extract_info(musics[7], download=True)
                     info['thumbnails'] = [{'filepath': thumbnail_path, 'id': 'local', 'url': ''}]
@@ -659,6 +661,32 @@ def yt_dl(musics):
                 except Exception as e:
                     print(e)
 
+
+#===========================================================
+#===========================================================
+#===========================================================
+#                    PLAYLIST EXPORT
+#===========================================================
+#===========================================================
+#===========================================================
+
+def export_to_samsung_music(conn, playlist_name):
+    playlist_path = str(pathlib.Path(__file__).parent.resolve()) + "/" + str(playlist_name) + ".txt"
+    content = select_row_in_table(conn, playlist_name, "", "", "music_id", False)
+    with open(playlist_path , "w") as file:
+        file.write("#EXTM3U")
+        for i in range(len(content)):
+            if content[i][0]!= '':
+                base_path = "../../../3332-3734/Music/From spotify/"
+                artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", content[i][0], "artist_id", True)
+                artist_name = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name", True)
+                album_id = select_row_in_table(conn, "music", "id", content[i][0], "album", True)
+                album_name = select_row_in_table(conn, "album", "id", album_id[0][0], "name", True)
+                music_name = select_row_in_table(conn, "music", "id", content[i][0], "title", True)
+                music_path = base_path + artist_name[0][0] + album_name[0][0] +"/"+ music_name[0][0] + ".m4a"
+                file.write("\n" + music_path)
+                print(music_path)
+                
 
 
 #===========================================================
@@ -682,13 +710,15 @@ def yt_dl(musics):
 
 conn = create_connection()
 a, b = check_database(conn)
-disconnect(conn)
 
+export_to_samsung_music(conn, "Granaëlle et Maxence cocotier")
+disconnect(conn)
+"""
 ans = ""
 print("\n Quelle est la playlist Spotify que vous voulez installer")
 link = input("\n Lien google : ") 
 
-print("1. Importer la playlist(crée une nouvelle playlist avec le même nom et les mêmes musiques). \n2. Installer chacune des musiques sans les ajouter à une playlist.\n3. Ajouter cette playlist à une autre.")
+print("1. Importer la playlist(crée une nouvelle playlist avec le même nom et les mêmes musiques). \n2. Installer chacune des musiques sans les ajouter à une playlist.\n3. Ajouter cette playlist à une autre.\n4. Vérifier l'intégrité de la base de donnée.")
 ans = input("\n Que voulez vous faire : ") 
 if ans == "1":
     conn = create_connection()
@@ -750,7 +780,7 @@ if ans == "4":
     disconnect(conn)
     
     
-    
+    """
     
     
     

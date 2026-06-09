@@ -556,7 +556,7 @@ def re_dl_music(conn, ids):
     music_link = "https://youtube.com/watch?v=" + music_link[0][0]
     cover_link = select_row_in_table(conn, "music", "id", ids[0], "cover_link", True)
     cover_link = "https://i.scdn.co/image/" + cover_link[0][0]
-    title = select_row_in_table(conn, "music", "id", ids[0], "title")
+    title = select_row_in_table(conn, "music", "id", ids[0], "title", True)
     title = title[0][0]
     artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", ids[0], "artist_id", True)
     artist = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name", True)
@@ -592,12 +592,13 @@ def yt_dl(musics):
         #preferredcodec : format de l'audio 
         #key embedthumbnail : Demande une couverture
     ydl_opts = {
-        'format': 'm4a/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': f'{"artists/" +musics[2][0]+"/"+ musics[3]}/{musics[1]}.%(ext)s',
         "sleep_interval": 2,
         "max_sleep_interval": 5,
         "retries": 10,
         "ignoreerrors": True,
+        'remote_components': {'ejs:github'},
         #'cookiefile': '/path/to/cookies.txt',
         #'username': 'dlyoutube67@gmail.com',
         #'password': 'zX.A.tn~wYr8Y',
@@ -636,30 +637,33 @@ def yt_dl(musics):
         
     
     #En utilisant les options ydl_opts, installer les musiques.
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl :
-        try: 
+    try: 
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl :
+        
             thumbnail_path = os.path.abspath("temp/" + musics[0])
     
             info = ydl.extract_info(musics[7], download=True)
             info['thumbnails'] = [{'filepath': thumbnail_path, 'id': 'local', 'url': ''}]
             info.setdefault('__files_to_move', {})[thumbnail_path] = thumbnail_path
             files_to_move = {thumbnail_path: thumbnail_path}
-    
-            
             ydl.post_process(info['requested_downloads'][0]['filepath'], info, files_to_move)
-        except :
+    except :
+        try:
             for i in range(5):
-                try:
-                    #cookies_path = str(pathlib.Path(__file__).parent.resolve()) + "/cookies/youtube_cookies.txt"
-                    #print("\n\n\n",os.path.exists(cookies_path), "\n\n\n") 
-                    ydl_opts['cookiesfrombrowser'] = "('chrome', None, None, 'dlYoutube')"  # nom de ton profil dédié
+                ydl_opts['cookiesfrombrowser'] = ('firefox', '/home/maxence/.mozilla/firefox/XZ6RBb1a.Profile 1', None, None)
+                #ydl_opts['cookiesfrombrowser'] = ('firefox', None, None, 'XZ6RBb1a.Profile 1')
+                #ydl_opts['cookiefile']  = '/home/maxence/Documents/FreeMusicClean/cookies/cookies.txt'
+                print("cookiefile:", ydl_opts.get('cookiefile'))
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl :
                     thumbnail_path = os.path.abspath("temp/" + musics[0])
                     info = ydl.extract_info(musics[7], download=True)
                     info['thumbnails'] = [{'filepath': thumbnail_path, 'id': 'local', 'url': ''}]
                     info.setdefault('__files_to_move', {})[thumbnail_path] = thumbnail_path
                     files_to_move = {thumbnail_path: thumbnail_path}
-                except Exception as e:
-                    print(e)
+                    ydl.post_process(info['requested_downloads'][0]['filepath'], info, files_to_move)
+                    break
+        except Exception as e:
+            print(e)
 
 
 #===========================================================
@@ -670,6 +674,7 @@ def yt_dl(musics):
 #===========================================================
 #===========================================================
 
+#Creates a .m3u file compatible with samsung music and my phone
 def export_to_samsung_music(conn, playlist_name):
     playlist_path = str(pathlib.Path(__file__).parent.resolve()) + "/" + str(playlist_name) + ".txt"
     content = select_row_in_table(conn, playlist_name, "", "", "music_id", False)
@@ -710,10 +715,8 @@ def export_to_samsung_music(conn, playlist_name):
 
 conn = create_connection()
 a, b = check_database(conn)
-
-export_to_samsung_music(conn, "Granaëlle et Maxence cocotier")
 disconnect(conn)
-"""
+
 ans = ""
 print("\n Quelle est la playlist Spotify que vous voulez installer")
 link = input("\n Lien google : ") 
@@ -779,8 +782,6 @@ if ans == "4":
 
     disconnect(conn)
     
-    
-    """
     
     
     

@@ -107,8 +107,7 @@ def scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify):
             if musics[songNbrinPlaylist-1][1] == None:
                 musics[songNbrinPlaylist-1][1] = break_it(elements[j])
                 try:
-                    covers[songNbrinPlaylist-1][1] = scrap_cover(driver, elements[j])
-                    album_link = scrap_album(driver, elements[j])
+                    covers[songNbrinPlaylist-1][1] = scrap_cover(elements[j])
                 except StaleElementReferenceException:
                     # Full re-fetch, restart from scratch
                     return scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify)
@@ -153,43 +152,49 @@ def scrap_playlist(driver, link, thumbnail):
 
 #Input : element is a WebElement containing 1 music. 
 #Takes the little picture, changes the link to get the big one
-def scrap_cover(driver, element):
+def scrap_cover(element):
     img_elem = element.find_element(By.TAG_NAME, "img")
     img_link = img_elem.get_attribute("src")
     img_link =  img_link[:36] + "b273" + img_link[40:]
     return img_link
 
-def scrap_album(driver, element):
-    album = element.find_element(By.CLASS_NAME, "F_VvNCRKZ2cKj1a9")
-    print(album.tag_name)
-    album_link = album.get_attribute("href")
-    album_link = album_link[:7]
-    return album_link
-    
+def scrap_artist(element):
+    artists_element = element.find_elements(By.CLASS_NAME, "HyipfPVwSpodPBHR")
+    artists_final = [el.text for el in artists_element[0].find_elements(By.CSS_SELECTOR, '[tabindex="-1"]')]
+    for i in range(len(artists_final)):
+        artists_final[i] = re.sub("'", " ", artists_final[i])
+        
+    artists_links = []
+    album_link = ""
+    links = element.find_elements(By.CSS_SELECTOR, '[href]')
+    for i in range(len(links)):
+        link= links[i].get_attribute("href")
+        if "artist" in link:
+            artists_links.append(link[32:])
+        if "album" in link:
+            album_link = link[31:]
+    return artists_final, artists_links, album_link
 
 #Takes in entry the string scrapped from the playlist
 #Returns the string broken in this format : [numberInPlaylist, title, [artists], album, time since published, duration]
 #Retire les ' pour ne pas bloquer avec le SQL
 def break_it(element):
-    artists_element = element.find_elements(By.CLASS_NAME, "HyipfPVwSpodPBHR")
-    
-    artists_final = [el.text for el in artists_element[0].find_elements(By.CSS_SELECTOR, '[tabindex="-1"]')]
-    
     data = element.text
     lines = [line.strip() for line in data.strip().split('\n') if line.strip()]
+    k = 0
+    for i in range(len(lines)):
+        if lines[i-k] =="E" or "•" in lines[i-k] or lines[i-k]== "Music video" :
+            del lines[i-k]
+            k+=1
+        
     index = lines[0]
-    
-    if index == '66':
-        None
-    for i in range(len(artists_final)):
-        artists_final[i] = re.sub("'", " ", artists_final[i])
-
+    artists_final, artists_links, album_link = scrap_artist(element)
     title = lines[1].replace("'", " ")
     duration = lines[-1]
     date = lines[-2]
     album = lines[3].replace("'", " ")
 
-    return [index, title, artists_final, album, date, duration]
+    return [index, title, artists_final, album, "youtube_link (pos = 4)", "cover_link (pos = 5)" , artists_links, album_link]
 
 #Makes a clean list of lists with break_it
 #Add the link to the cover 
@@ -197,7 +202,7 @@ def add_links(driver, musics, cover):
     tab = []
     if cover!=None :
         for i in range(len(musics)):
-            musics[i][1].append(cover[i][1])
+            musics[i][1][5] = cover[i][1]
             tab.append(musics[i][1])
     else :
         for i in range(len(musics)):
@@ -270,7 +275,7 @@ def dl_cover(link, identifiant):
 def scrap(conn, playlist):
     driver = select_browser("Firefox")
     open_playlist(driver, playlist)
-    input("Est-ce le bon lien ?")
+    input("Dépeche")
     print(f'There is {get_info(driver, playlist)} songs in this playlist')
     musics, covers, name = scrap_playlist(driver, playlist, True)
     driver.quit()
@@ -402,13 +407,13 @@ def add_music(conn, music, link):
         artists_id = []
         #On récupère leur id
         for i in range(len(artists)):
-            toto = id_if_not_present(conn, "artist", "name", artists[i], False, "")
+            toto = id_if_not_present(conn, "artist", "name, link", artists[i] + "','" + music[6][0], True, "SELECT ID FROM artist WHERE name = '" + artists[0] + "' AND link = '" + music[6][0] + "'")
             artists_id.append(toto)
         #On prend l'album
         album_id = 0
-        album_id = id_if_not_present(conn, "album", "name, artist", music[3] + "', '"  + artists_id[0], True, "SELECT ID FROM album WHERE name = '"+music[3]+"' AND artist = '"+ str(artists_id[0]) + "'")
+        album_id = id_if_not_present(conn, "album", "name, artist, link", music[3] + "', '"  + artists_id[0] + "','" + music[7], True, "SELECT ID FROM album WHERE name = '"+music[3]+"' AND artist = '"+ str(artists_id[0]) + "' AND link = '" + music[7] + "'")
         #On crée la musique nouvelle
-        insert(conn, "music", "title, music_link, album, cover_link", music[1]+ "', '" + link + "', '" + str(album_id) + "', '" + break_cover_link(music[6]) , 0, "")
+        insert(conn, "music", "title, music_link, album, cover_link", music[1]+ "', '" + link + "', '" + str(album_id) + "', '" + break_cover_link(music[5]) , 0, "")
         #On réccupère son identifiant
         music_id = id_finder(conn, "music", "title", music[1], False, "")
         for i in artists_id:
@@ -438,12 +443,12 @@ def dl_only_musics(final, youtubeLinks, extensions):
     ids = []
     k=0
     for link in youtubeLinks:
-        final[link[0]-1].append(link[1])
+        final[link[0]-1][4] = link[1]
         if extensions[k][1] != None:
             musique, musique_id = add_music(conn, final[link[0]-1], extensions[k][1])
             ids.append(musique_id)
             if musique != None:
-                dl_cover(musique[6], musique[0])
+                dl_cover(musique[5], musique[0])
                 while not os.path.exists(temp_path):
                     time.sleep(0.1)
                 yt_dl(musique)
@@ -553,12 +558,12 @@ def modify_music(conn, name, new_link):
 
 #Takes an id and returns the title, artist name, album name, music link & cover link with the same format taken into yt_dl
 def extract_all_info(conn, music_id):
-    query = "SELECT music.id, music.title, artist.name, album.name, music.music_link, music.cover_link FROM music JOIN lienartistmusic ON lienartistmusic.music_id = music.id JOIN artist ON lienartistmusic.artist_id = artist.id JOIN album ON album.id = music.album WHERE music.id = "+ str(music_id)
+    query = "SELECT music.id, music.title, artist.name, album.name, music.music_link, music.cover_link, artist.link, album.link FROM music JOIN lienartistmusic ON lienartistmusic.music_id = music.id JOIN artist ON lienartistmusic.artist_id = artist.id JOIN album ON album.id = music.album WHERE music.id = " + str(music_id)
     with conn:
         result = conn.execute(query)
         musique_raw = result.fetchall()
 
-    musique = [music_id ,musique_raw[0][1], [musique_raw[0][2]], musique_raw[0][3], "", "", "https://i.scdn.co/image/" +musique_raw[0][5], "https://youtube.com/watch?v=" + musique_raw[0][4]]
+    musique = [music_id ,musique_raw[0][1], [musique_raw[0][2]], musique_raw[0][3],  "https://youtube.com/watch?v=" + musique_raw[0][4], "https://i.scdn.co/image/" +musique_raw[0][5], "open.spotify.com/artist/" + musique_raw[0][6], "open.spotify.com/album/" + musique_raw[0][7]]
     return musique
 
 
@@ -630,7 +635,7 @@ def yt_dl(musics):
         
             thumbnail_path = os.path.abspath("temp/" + str(musics[0]))
     
-            info = ydl.extract_info(musics[7], download=True)
+            info = ydl.extract_info(musics[4], download=True)
             info['thumbnails'] = [{'filepath': thumbnail_path, 'id': 'local', 'url': ''}]
             info.setdefault('__files_to_move', {})[thumbnail_path] = thumbnail_path
             files_to_move = {thumbnail_path: thumbnail_path}
@@ -641,19 +646,19 @@ def yt_dl(musics):
             print("successful")
     except :
         try:
-            """for i in range(5):
+            for i in range(5):
                 ydl_opts['cookiesfrombrowser'] = ('firefox', '/home/maxence/.mozilla/firefox/XZ6RBb1a.Profile 1', None, None)
                 #ydl_opts['cookiesfrombrowser'] = ('firefox', None, None, 'XZ6RBb1a.Profile 1')
                 #ydl_opts['cookiefile']  = '/home/maxence/Documents/FreeMusicClean/cookies/cookies.txt'
                 print("cookiefile:", ydl_opts.get('cookiefile'))
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl :
                     thumbnail_path = os.path.abspath("temp/" + str(musics[0]))
-                    info = ydl.extract_info(musics[7], download=True)
+                    info = ydl.extract_info(musics[4], download=True)
                     info['thumbnails'] = [{'filepath': thumbnail_path, 'id': 'local', 'url': ''}]
                     info.setdefault('__files_to_move', {})[thumbnail_path] = thumbnail_path
                     files_to_move = {thumbnail_path: thumbnail_path}
                     ydl.post_process(info['requested_downloads'][0]['filepath'], info, files_to_move)
-                    break"""
+                    break
         except Exception as e:
             print(e)
 
@@ -772,7 +777,7 @@ if ans == "4":
     if ans == "1":
         for i in range(len(ids)):
             musique = extract_all_info(conn, ids[i][0])
-            dl_cover(musique[6], musique[0])
+            dl_cover(musique[5], musique[0])
             yt_dl(musique)
             
     disconnect(conn)

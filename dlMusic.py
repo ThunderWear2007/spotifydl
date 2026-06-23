@@ -9,10 +9,10 @@ import sqlite3
 from sqlite3 import Error
 import pathlib
 import yt_dlp
+from yt_dlp.postprocessor import FFmpegThumbnailsConvertorPP, EmbedThumbnailPP
 import os
 import requests
 import re
-from yt_dlp.postprocessor import FFmpegThumbnailsConvertorPP, EmbedThumbnailPP
 
 class Music:
     def __init__(self, index, title=None, artists=None, album=None, yt_link=None, cvr_link=None, artists_link=None, album_link=None):
@@ -99,7 +99,7 @@ def scroll_to_track(driver, track_index: int):
 
 
 #Scrap all the music on the page, to call in a while loop with end condition
-def scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify):
+def scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify, link):
     elements, elements_text, elements_number = [],[],[]
     try :
         elements = []
@@ -113,16 +113,27 @@ def scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify):
                 elements_number.append(order)
             except:
                 None
-                
+               
+        if "album" in link :
+            cover_link = scrap_cover(driver, elements, "album")
+            album_name_element = driver.find_element(By.CLASS_NAME, 'V6mQis7iO10znT_2')
+            album_name = album_name_element.text
+        
         for j in range(len(elements)):
             songNbrinPlaylist = elements_number[j]
             if musics[songNbrinPlaylist-1][1] == None:
-                musics[songNbrinPlaylist-1][1] = break_it(elements[j])
                 try:
-                    covers[songNbrinPlaylist-1][1] = scrap_cover(elements[j])
+                    if "album" not in link :
+                        cover_link = scrap_cover(driver, elements[j], None)
+                        musics[songNbrinPlaylist-1][1] = break_it(elements[j], None)
+                    elif "album" in link :
+                        info = break_it(elements[j], "album")
+                        info.album, info.album_link, info.cvr_link = album_name, link[31:], cover_link
+                        musics[songNbrinPlaylist-1][1] = info
+                    covers[songNbrinPlaylist-1][1] = cover_link
                 except StaleElementReferenceException:
                     # Full re-fetch, restart from scratch
-                    return scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify)
+                    return scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify, link)
                     
         if songNbrinPlaylist == nbr:
             end = True
@@ -151,23 +162,30 @@ def scrap_playlist(driver, link, thumbnail):
         covers[i]=[i, None]
     
     while not end:
-        musics, covers, end = scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify)
+        musics, covers, end = scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify, link)
         
     missing_id = get_missing(musics)
     print(missing_id)
     for i in missing_id:
         scroll_to_track(driver, i)
         wait_until_shown(driver,"CSS_SELECTOR", '[data-testid="tracklist-row"]', 20)
-        musics, covers, toto = scrap_all_music(driver, musics, covers, thumbnail,nbr, "", isSpotify)
+        musics, covers, toto = scrap_all_music(driver, musics, covers, thumbnail,nbr, "", isSpotify, link)
         
     return musics, covers, name
 
 #Input : element is a WebElement containing 1 music. 
 #Takes the little picture, changes the link to get the big one
-def scrap_cover(element):
-    img_elem = element.find_element(By.TAG_NAME, "img")
-    img_link = img_elem.get_attribute("src")
-    img_link =  img_link[:36] + "b273" + img_link[40:]
+def scrap_cover(driver, element, linkType):
+    if linkType == None:
+        img_elem = element.find_element(By.TAG_NAME, "img")
+        img_link = img_elem.get_attribute("src")
+        img_link =  img_link[:36] + "b273" + img_link[40:]
+        
+    elif linkType == "album":
+        img_elem = driver.find_element(By.CLASS_NAME, "G3NmZakc4yGCaqGI")
+        img_elem = img_elem.find_element(By.TAG_NAME, "img")
+        img_link = img_elem.get_attribute("src")
+        img_link =  img_link[:36] + "b273" + img_link[40:]
     return img_link
 
 def scrap_artist(element):
@@ -190,7 +208,7 @@ def scrap_artist(element):
 #Takes in entry the string scrapped from the playlist
 #Returns the string broken in this format : [numberInPlaylist, title, [artists], album, time since published, duration]
 #Retire les ' pour ne pas bloquer avec le SQL
-def break_it(element):
+def break_it(element, linkType):
     data = element.text
     lines = [line.strip() for line in data.strip().split('\n') if line.strip()]
     k = 0
@@ -198,13 +216,21 @@ def break_it(element):
         if lines[i-k] =="E" or "•" in lines[i-k] or lines[i-k]== "Music video" :
             del lines[i-k]
             k+=1
-        
-    index = lines[0]
-    artists_final, artists_links, album_link = scrap_artist(element)
-    title = lines[1].replace("'", " ")
-    album = lines[3].replace("'", " ")
-    music = Music(index,title , artists_final, album, None, None, artists_links, album_link)
+    
+    if linkType == None :
+        index = lines[0]
+        artists_final, artists_links, album_link = scrap_artist(element)
+        title = lines[1].replace("'", " ")
+        album = lines[3].replace("'", " ")
 
+    elif linkType == "album":
+        index = lines[0]
+        artists_final, artists_links, album_link = scrap_artist(element)
+        album_link = None
+        title = lines[1].replace("'", " ")
+        album = None
+    
+    music = Music(index,title , artists_final, album, None, None, artists_links, album_link)
     return music#[index, title, artists_final, album, "youtube_link (pos = 4)", "cover_link (pos = 5)" , artists_links, album_link]
 
 #Makes a clean list of lists with break_it
@@ -662,6 +688,9 @@ def yt_dl(music):
                     info['thumbnails'] = [{'filepath': thumbnail_path, 'id': 'local', 'url': ''}]
                     info.setdefault('__files_to_move', {})[thumbnail_path] = thumbnail_path
                     files_to_move = {thumbnail_path: thumbnail_path}
+                    info['ext'] = 'm4a'
+                    info['__postprocessors']= [FFmpegThumbnailsConvertorPP(ydl, format='jpg'),EmbedThumbnailPP(ydl)]
+                    ydl._pps['post_process'] = []
                     ydl.post_process(info['requested_downloads'][0]['filepath'], info, files_to_move)
                     break
         except Exception as e:
@@ -678,7 +707,7 @@ def yt_dl(music):
 
 #Creates a .m3u file compatible with samsung music and my phone
 def export_to_samsung_music(conn, playlist_name):
-    playlist_path = str(pathlib.Path(__file__).parent.resolve()) + "/" + str(playlist_name) + ".txt"
+    playlist_path = str(pathlib.Path(__file__).parent.resolve()) + "/playlists/" + str(playlist_name) + ".txt"
     content = select_row_in_table(conn, playlist_name, "", "", "music_id", False)
     with open(playlist_path , "w") as file:
         file.write("#EXTM3U")
@@ -694,6 +723,33 @@ def export_to_samsung_music(conn, playlist_name):
                 file.write("\n" + music_path)
                 print(music_path)
                 
+                
+def export_playlist(conn, playlist_name):
+    playlist_path = str(pathlib.Path(__file__).parent.resolve()) + "/playlists/" + str(playlist_name) + ".txt"
+    content = select_row_in_table(conn, playlist_name, "", "", "music_id", False)
+    with open(playlist_path , "w") as file:
+        file.write("#EXTM3U")
+        for i in range(len(content)):
+            if content[i][0]!= '':
+                base_path = "/home/maxence/Documents/FreeMusicClean/artists"
+                artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", content[i][0], "artist_id", True)
+                artist_name = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name", True)
+                album_id = select_row_in_table(conn, "music", "id", content[i][0], "album", True)
+                album_name = select_row_in_table(conn, "album", "id", album_id[0][0], "name", True)
+                music_name = select_row_in_table(conn, "music", "id", content[i][0], "title", True)
+                music_path = base_path + artist_name[0][0] + "/" + album_name[0][0] +"/"+ music_name[0][0] + ".m4a"
+                file.write("\n" + music_path)
+                print(music_path)
+    
+    
+#===========================================================
+#===========================================================
+#===========================================================
+#                    SPOTIFY SEARCHING
+#===========================================================
+#===========================================================
+#===========================================================
+
 
 
 #===========================================================
@@ -711,14 +767,14 @@ def export_to_samsung_music(conn, playlist_name):
 
 #playlist = "https://open.spotify.com/playlist/7gxLKaI7Ta1Rql8VQfDlYi"
 #playlist = "https://open.spotify.com/playlist/37i9dQZF1DXbS5WTN5nKF7" 
-#playlist = "https://open.spotify.com/album/0owIvIFEbUN6xtsplJHOjZ"
+#playlist = "https://open.spotify.com/album/4k9SABQcURDFR9T1cFYJxs"
 
 #====================================
 
 conn = create_connection()
 a, b = check_database(conn)
+#export_playlist(conn, "Liked Songs")
 disconnect(conn)
-
 
 
 

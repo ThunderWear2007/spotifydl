@@ -25,8 +25,6 @@ class Music:
         self.artists_link = artists_link
         self.album_link = album_link
     
-    
- 
 #Select which browser to use when scraping
 def select_browser(browser_name):
     return webdriver.Firefox()
@@ -36,7 +34,7 @@ def open_playlist(driver, link):
     driver.get(link)
 
 #Wait for "element" to be shown on screen, if the time exceed "max_time" stop and return a timeout
-def wait_until_shown(driver, elem_type, element, max_time):
+def wait_until_shown(driver, elem_type, element, max_time = 20):
     try : 
         if elem_type =="CSS_SELECTOR" :
             WebDriverWait(driver, max_time).until(EC.visibility_of_element_located((By.CSS_SELECTOR, element)))
@@ -118,6 +116,7 @@ def scrap_all_music(driver, musics, covers, thumbnail, nbr, end, isSpotify, link
             cover_link = scrap_cover(driver, elements, "album")
             album_name_element = driver.find_element(By.CLASS_NAME, 'V6mQis7iO10znT_2')
             album_name = album_name_element.text
+            album_name = re.sub("'", " ", album_name)
         
         for j in range(len(elements)):
             songNbrinPlaylist = elements_number[j]
@@ -175,7 +174,7 @@ def scrap_playlist(driver, link, thumbnail):
 
 #Input : element is a WebElement containing 1 music. 
 #Takes the little picture, changes the link to get the big one
-def scrap_cover(driver, element, linkType):
+def scrap_cover(driver, element, linkType= None):
     if linkType == None:
         img_elem = element.find_element(By.TAG_NAME, "img")
         img_link = img_elem.get_attribute("src")
@@ -188,9 +187,12 @@ def scrap_cover(driver, element, linkType):
         img_link =  img_link[:36] + "b273" + img_link[40:]
     return img_link
 
-def scrap_artist(element):
-    artists_element = element.find_elements(By.CLASS_NAME, "HyipfPVwSpodPBHR")
-    artists_final = [el.text for el in artists_element[0].find_elements(By.CSS_SELECTOR, '[tabindex="-1"]')]
+def scrap_artist(element, by = By.CLASS_NAME, elem_name = "HyipfPVwSpodPBHR"):
+    artists_element = element.find_elements(by, elem_name)
+    if elem_name != "HyipfPVwSpodPBHR":
+        artists_final = [el.text for el in artists_element]
+    else:
+        artists_final = [el.text for el in artists_element[0].find_elements(By.CSS_SELECTOR, '[tabindex="-1"]')]
     for i in range(len(artists_final)):
         artists_final[i] = re.sub("'", " ", artists_final[i])
         
@@ -205,8 +207,7 @@ def scrap_artist(element):
             album_link = link[31:]
     return artists_final, artists_links, album_link
 
-#Takes in entry the string scrapped from the playlist
-#Returns the string broken in this format : [numberInPlaylist, title, [artists], album, time since published, duration]
+
 #Retire les ' pour ne pas bloquer avec le SQL
 def break_it(element, linkType):
     data = element.text
@@ -310,13 +311,30 @@ def dl_cover(link, identifiant):
 def scrap(conn, playlist):
     driver = select_browser("Firefox")
     open_playlist(driver, playlist)
-    #input("Dépeche")
+    input("Dépeche")
     print(f'There is {get_info(driver, playlist)} songs in this playlist')
     musics, covers, name = scrap_playlist(driver, playlist, True)
     driver.quit()
     final = add_links(driver, musics, covers)
     youtubeLinks, extensions, ids = search_music(conn, final)
     return final, youtubeLinks, extensions, name, ids
+
+def extract_song_info(driver, song_link):
+    driver.execute_script("window.open('');")
+    driver.switch_to.window(driver.window_handles[-1])
+    driver.get(song_link)
+    wait_until_shown(driver, "CLASS", "fNnrSm2k2IonbI9c")
+    song = driver.find_element(By.CLASS_NAME, "fNnrSm2k2IonbI9c")
+    img_element = song.find_element(By.CLASS_NAME, "G3NmZakc4yGCaqGI")
+    title_element = song.find_element(By.CLASS_NAME, "V6mQis7iO10znT_2")
+    album_element = song.find_element(By.CLASS_NAME, "dicrc5_MWcv63llC")
+    img = scrap_cover(driver, img_element)
+    artists_name, artists_link, album_link = scrap_artist(song, By.CSS_SELECTOR, '[data-testid="creator-link"]')
+    title = title_element.text.replace("'", " ")
+    album = album_element.text.replace("'", " ")
+    return Music(-1, title, artists_name, album, None, img, artists_link, album_link)
+    
+    
 
 #===========================================================
 #===========================================================
@@ -440,7 +458,7 @@ def add_music(conn, music, link):
         artists_id = []
         #On récupère leur id
         for i in range(len(artists)):
-            artist_id = id_if_not_present(conn, "artist", "name, link", artists[i] + "','" + music.artists_link[0], True, "SELECT ID FROM artist WHERE name = '" + artists[0] + "' AND link = '" + music.artists_link[0] + "'")
+            artist_id = id_if_not_present(conn, "artist", "name, link", artists[i] + "','" + music.artists_link[i], True, "SELECT ID FROM artist WHERE name = '" + artists[i] + "' AND link = '" + music.artists_link[i] + "'")
             artists_id.append(artist_id)
         #On prend l'album
         album_id = 0
@@ -451,7 +469,7 @@ def add_music(conn, music, link):
         music_id = id_finder(conn, "music", "title", music.title, False, "")
         for i in artists_id:
             #On relie les artistes et la musique
-            insert(conn, "lienartistmusic", "music_id, artist_id", str(music_id[0]) +"," + str(i), True, "INSERT INTO lienartistmusic (music_id, artist_id) VALUES (" + music_id[0] + ", " + i + ");")
+            insert(conn, "lienartistmusic", "music_id, artist_id", str(music_id[0]) +"," + str(i), True, "INSERT INTO lienartistmusic (music_id, artist_id) VALUES (" + music_id + ", " + i + ");")
             conn.commit()
         music.index = music_id
         return music, music_id
@@ -479,7 +497,7 @@ def dl_only_musics(final, youtubeLinks, extensions):
         final[link[0]-1].yt_link = link[1]
         if extensions[k][1] != None:
             musique, musique_id = add_music(conn, final[link[0]-1], extensions[k][1])
-            ids.append(musique_id)
+            ids.append([k, musique_id])
             if musique != None:
                 dl_cover(musique.cvr_link, musique.index)
                 while not os.path.exists(temp_path):
@@ -714,12 +732,8 @@ def export_to_samsung_music(conn, playlist_name):
         for i in range(len(content)):
             if content[i][0]!= '':
                 base_path = "../../../3332-3734/Music/From spotify/"
-                artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", content[i][0], "artist_id", True)
-                artist_name = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name", True)
-                album_id = select_row_in_table(conn, "music", "id", content[i][0], "album", True)
-                album_name = select_row_in_table(conn, "album", "id", album_id[0][0], "name", True)
-                music_name = select_row_in_table(conn, "music", "id", content[i][0], "title", True)
-                music_path = base_path + artist_name[0][0] + "/" + album_name[0][0] +"/"+ music_name[0][0] + ".m4a"
+                music = extract_all_info(conn, content[i][0])
+                music_path = base_path + music.artists[0] + "/" + music.album +"/"+ music.title + ".m4a"
                 file.write("\n" + music_path)
                 print(music_path)
                 
@@ -730,14 +744,12 @@ def export_playlist(conn, playlist_name):
     with open(playlist_path , "w") as file:
         file.write("#EXTM3U")
         for i in range(len(content)):
+            if i== 129:
+                print("arrivé")
             if content[i][0]!= '':
-                base_path = "/home/maxence/Documents/FreeMusicClean/artists"
-                artist_id = select_row_in_table(conn, "lienartistmusic", "music_id", content[i][0], "artist_id", True)
-                artist_name = select_row_in_table(conn, "artist", "id", artist_id[0][0], "name", True)
-                album_id = select_row_in_table(conn, "music", "id", content[i][0], "album", True)
-                album_name = select_row_in_table(conn, "album", "id", album_id[0][0], "name", True)
-                music_name = select_row_in_table(conn, "music", "id", content[i][0], "title", True)
-                music_path = base_path + artist_name[0][0] + "/" + album_name[0][0] +"/"+ music_name[0][0] + ".m4a"
+                base_path = "/home/maxence/Documents/FreeMusicClean/artists/"
+                music = extract_all_info(conn, content[i][0])
+                music_path = base_path + music.artists[0] + "/" + music.album +"/"+ music.title + ".m4a"
                 file.write("\n" + music_path)
                 print(music_path)
     
@@ -749,6 +761,37 @@ def export_playlist(conn, playlist_name):
 #===========================================================
 #===========================================================
 #===========================================================
+
+
+def search(driver, songName):
+    search_link = f'https://open.spotify.com/search/{songName}'
+    driver.get(search_link)
+    #wait_until_shown(driver, "CLASS", "VPPpvpJl6Y0L3OWp")
+    try: 
+        wait_until_shown(driver, "CLASS", "Znh5DcMXShs8vQxR")
+        time.sleep(0.3)
+        if EC.presence_of_element_located((By.CLASS_NAME, "VPPpvpJl6Y0L3OWp")):
+            wait_until_shown(driver, "CLASS", "VPPpvpJl6Y0L3OWp")
+            element = driver.find_element(By.CLASS_NAME, "VPPpvpJl6Y0L3OWp")
+            link = element.get_attribute("aria-labelledby")
+            link = "https://open.spotify.com/track/" + link[-22:]
+        elif EC.presence_of_element_located((By.CLASS_NAME, "RHD86oLu2vEXXZm6")):
+            wait_until_shown(driver, "CLASS", "RHD86oLu2vEXXZm6")
+            element = driver.find_element(By.CLASS_NAME, "RHD86oLu2vEXXZm6")
+            link = element.get_attribute("href")
+    except:
+        print("Je sais plus quoi faire là gros")
+    
+    music = extract_song_info(driver, link)
+    ans = input(f'\nDo you want to download {music.title} from {music.artists[0]} ? ')
+    if ans == "1":
+        conn = create_connection()
+        todl, toto, titi = search_music(conn, [music])
+        if todl != []:
+            yt_dl(todl)
+    else:
+        print("THe music was not downloaded")
+
 
 
 
@@ -773,11 +816,14 @@ def export_playlist(conn, playlist_name):
 
 conn = create_connection()
 a, b = check_database(conn)
-#export_playlist(conn, "Liked Songs")
+#export_to_samsung_music(conn, "Liked Songs")
 disconnect(conn)
+"""
+name = input("\nWhat is the name of the music you want to download ? ")
+driver = select_browser("Firefox")
+search(driver, name)
 
-
-
+"""
 ans = ""
 print("\n Quelle est la playlist Spotify que vous voulez installer")
 link = input("\n Lien google : ") 
@@ -788,7 +834,10 @@ if ans == "1":
     conn = create_connection()
     final,youtubeLinks, extensions, name, ids = scrap(conn, link)
     table_names = tables(conn, "table")
-    dl_only_musics(final, youtubeLinks, extensions)
+    dl_ids = dl_only_musics(final, youtubeLinks, extensions)
+    for i in range(len(dl_ids)):
+        k = dl_ids[i][0]
+        ids[k] = [k+1, dl_ids[i][1]]
     end = False
     while not end :
         if not name in table_names:
